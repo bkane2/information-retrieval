@@ -52,8 +52,7 @@
     (init))
 
   (let (embeddings data df)
-    (setq embeddings (mapcar (lambda (document)
-      (py4cl:python-method *model* "encode" document)) documents))
+    (setq embeddings (py4cl:python-method *model* "encode" documents))
     
     (when filename
       (py4cl:python-exec "import pandas as pd")
