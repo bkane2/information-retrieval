@@ -1,0 +1,3 @@
+test.lisp
+*.fasl
+*.csv
