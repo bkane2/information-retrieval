@@ -27,6 +27,9 @@
 ;`````````````````````````````````````
 ; Initializes by retrieving and storing the model for retrieval (and a cross-encoder model, if optionally specified).
 ;
+  (py4cl:python-exec "import os")
+  (py4cl:python-exec "os.environ['TOKENIZERS_PARALLELISM'] = 'false'")
+
   (if use-cross-encoder
     (py4cl:python-exec "from sentence_transformers import SentenceTransformer, CrossEncoder")
     (py4cl:python-exec "from sentence_transformers import SentenceTransformer"))
