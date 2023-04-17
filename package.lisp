@@ -6,6 +6,7 @@
 (defpackage :information-retrieval
   (:use :cl :py4cl)
   (:export
+    set-api
     set-model
     set-cross-encoder
     init

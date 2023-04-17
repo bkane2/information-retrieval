@@ -7,6 +7,7 @@ A package for doing basic information retrieval using Python's SentenceTransform
 - Quicklisp
 - [ASDF version 3 or above](https://common-lisp.net/project/asdf/archives/asdf.lisp)
 - [sentence_transformers](https://pypi.org/project/sentence-transformers/), Install with `pip install sentence_transformers`.
+- HuggingFace [transformers](https://huggingface.co/docs/transformers/installation), Install with `pip install transformers`.
 - [numpy](https://numpy.org/)
 - [pandas](https://pandas.pydata.org/)
 - py4cl (loaded automatically via quicklisp)
@@ -24,7 +25,7 @@ If difficulties are encountered using the library on Windows, you may need to in
 
 ### Initialization
 Initialize the package to pre-load the models using `(information-retrieval:init)`. To specify which sentence_transformer models to use for the [candidate retrieval](https://www.sbert.net/docs/pretrained_models.html) and [cross-encoder re-scoring](https://huggingface.co/cross-encoder) (if used), set the model names beforehand:
-```
+```lisp
 $ sbcl
 $ (ql:quickload :information-retrieval)
 $ ...[loading messages]...
@@ -33,6 +34,19 @@ $ (information-retrieval:set-cross-encoder "cross-encoder/ms-marco-electra-base"
 $ (information-retrieval:init)
 ```
 Note that the two models above are the defaults used if initializing the package without specifying models explicitly.
+
+The package also supports use of the HuggingFace API for candidate retrieval (the cross-encoder model is currently not supported). To use the API, set the *api* flag before initialization (and make sure that the correct API model path is given):
+
+```lisp
+$ sbcl
+$ (ql:quickload :information-retrieval)
+$ ...[loading messages]...
+$ (information-retrieval:set-api t)
+$ (information-retrieval:set-model "sentence-transformers/all-distilroberta-v1")
+$ (information-retrieval:init :api-key *api-key*)
+```
+
+The API key will also need to be provided as a keyword arg to the other functions (see below).
 
 ### Embedding documents
 The `embed-documents` function allows for a list of documents (i.e., strings) to be encoded as embeddings using the chosen sentence_transformer model:
@@ -46,6 +60,14 @@ By default, this will return a list of Lisp vectors. The documents and embedding
 ```lisp
 $ (setq documents '("Sentence one." "Sentence two." "Sentence three."))
 $ (information-retrieval:embed-documents documents :filename "test.csv" :append t)
+```
+
+If using API, provide the API key as a keyword argument (this function will not actually embed the documents, but will still output
+a CSV file containing the documents if a filename is specified):
+
+```lisp
+$ (setq documents '("Sentence one." "Sentence two." "Sentence three."))
+$ (information-retrieval:embed-documents documents :filename "test.csv" :api-key *api-key*)
 ```
 
 ### Retrieving candidates
@@ -66,6 +88,13 @@ $ (setq text '("Test sentence."))
 $ (information-retrieval:retrieve text :n 5 :documents '("Sentence one." "Sentence two."))
 ```
 
+If using API, provide the API key as a keyword argument:
+
+```lisp
+$ (setq text '("Test sentence."))
+$ (information-retrieval:retrieve text :n 5 :filename "test.csv" :api-key *api-key*)
+```
+
 
 ### Reranking candidates
 The `rerank` function is used to select the final `n` top documents (1 by default) from a given list of documents using the chosen cross-encoder model.
@@ -75,6 +104,8 @@ $ (setq text '("Test sentence."))
 $ (information-retrieval:rerank text :n 1 :documents '("Sentence one." "Sentence two."))
 ```
 
+API mode is currently not supported for this function.
+
 
 ### Retrieving and reranking
 The `retrieve+rerank` function combines `retrieve` and `rerank` to select a list of the `n-candidate` most similar documents, and then the `n-result` top documents after reranking. The other keyword arguments should be the same as the `retrieve` function.
@@ -83,3 +114,5 @@ The `retrieve+rerank` function combines `retrieve` and `rerank` to select a list
 $ (setq text '("Test sentence."))
 $ (information-retrieval:retrieve+rerank text :n-candidate 5 :n-result 1 :filename "test.csv")
 ```
+
+API mode is currently not supported for this function.

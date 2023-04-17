@@ -3,8 +3,19 @@
 
 (in-package :information-retrieval)
 
+(defvar +huggingface-prefix+ "https://api-inference.huggingface.co/models/")
+
+(defparameter *api* nil)
 (defparameter *model-name* "all-distilroberta-v1")
 (defparameter *cross-encoder-name* "cross-encoder/ms-marco-electra-base")
+
+
+(defun set-api (api)
+;```````````````````````
+; Used to set whether to use the HuggingFace API
+;
+  (setq *api* api)
+) ; END set-api
 
 
 (defun set-model (model-name)
@@ -23,52 +34,146 @@
 ) ; END set-cross-encoder
 
 
-(defun init (&key use-cross-encoder)
-;`````````````````````````````````````
+(defun init (&key use-cross-encoder api-key)
+;````````````````````````````````````````````
 ; Initializes by retrieving and storing the model for retrieval (and a cross-encoder model, if optionally specified).
+; If *api* is set to t, then don't initialize local models, but set *model* to the appropriate model API URL.
 ;
-  (py4cl:python-exec "import os")
-  (py4cl:python-exec "os.environ['TOKENIZERS_PARALLELISM'] = 'false'")
+  (cond
+    ; Use API model
+    (*api*
+      (defparameter *model* (concatenate 'string +huggingface-prefix+ *model-name*))
+      (similarity-api api-key "init" #("init")))
 
-  (if use-cross-encoder
-    (py4cl:python-exec "from sentence_transformers import SentenceTransformer, CrossEncoder")
-    (py4cl:python-exec "from sentence_transformers import SentenceTransformer"))
+    ; Use local models
+    (t
+      (py4cl:python-exec "import os")
+      (py4cl:python-exec "os.environ['TOKENIZERS_PARALLELISM'] = 'false'")
 
-  (defparameter *model*
-    (py4cl:python-eval (format nil "SentenceTransformer('~a')" *model-name*)))
+      (if use-cross-encoder
+        (py4cl:python-exec "from sentence_transformers import SentenceTransformer, CrossEncoder")
+        (py4cl:python-exec "from sentence_transformers import SentenceTransformer"))
 
-  (if use-cross-encoder
-    (defparameter *cross-encoder*
-      (py4cl:python-eval (format nil "CrossEncoder('~a', max_length=512)" *cross-encoder-name*)))
-    (defparameter *cross-encoder* nil))
+      (defparameter *model*
+        (py4cl:python-eval (format nil "SentenceTransformer('~a')" *model-name*)))
+
+      (if use-cross-encoder
+        (defparameter *cross-encoder*
+          (py4cl:python-eval (format nil "CrossEncoder('~a', max_length=512)" *cross-encoder-name*)))
+        (defparameter *cross-encoder* nil))))
 
   t
 ) ; END init
 
 
-(defun embed-documents (documents &key filename append)
-;`````````````````````````````````````````````````````````
+(defun query-api (api-url api-key query)
+;`````````````````````````````````````````
+; Queries a HuggingFace API at a given URL, given an API key and a query (i.e., hash table)
+;
+  (let (data (header (make-hash-table :test #'equal)) response ret)
+    (py4cl:python-exec "import json")
+    (py4cl:python-exec "import requests")
+    (setf (gethash "Authorization" header) (format nil "Bearer ~a" api-key))
+    (setq data (py4cl:python-call "json.dumps" query))
+    (setq response (py4cl:python-call "requests.request" "POST" api-url :headers header :data data))
+    (setq ret (py4cl:python-method response "content.decode" "utf-8"))
+    (setq ret (py4cl:python-call "json.loads" ret))
+    ret
+)) ; END query-api
+
+
+(defun similarity-api (api-key text documents)
+;````````````````````````````````````````````````
+; Gets a list of similarities between a given text and a list of documents, using the HuggingFace API.
+;
+  (when (or (not (boundp '*model*)) (null *model*))
+    (init))
+
+  (let ((query (make-hash-table :test #'equal))
+        (inputs (make-hash-table :test #'equal))
+        (options (make-hash-table :test #'equal)))
+    (setf (gethash "source_sentence" inputs) text)
+    (setf (gethash "sentences" inputs) documents)
+    (setf (gethash "wait_for_model" options) t)
+    (setf (gethash "inputs" query) inputs)
+    (setf (gethash "options" query) options)
+
+    (query-api *model* api-key query)
+)) ; END similarity-api
+
+
+(defun embed-documents (documents &key filename append api-key)
+;````````````````````````````````````````````````````````````````
 ; Embeds a list of documents (strings). If a filename is given, create a .CSV file containing the resulting
 ; embeddings for each document (or append to an existing .CSV file if :append t is given).
+;
+; If using the API, do not embed documents, but still create a .CSV file containing the documents (if specified).
 ;
   (when (or (not (boundp '*model*)) (null *model*))
     (init))
 
   (let (embeddings data df)
-    (setq embeddings (py4cl:python-method *model* "encode" documents))
-    
-    (when filename
-      (py4cl:python-exec "import pandas as pd")
-      (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents embeddings)))
-      (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding")))
-      (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t)))
-  
+
+    (cond
+      ; Use API model
+      (*api*
+        (when filename
+          (py4cl:python-exec "import pandas as pd")
+          (setq data documents)
+          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document")))
+          (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t))))
+
+      ; Use local model
+      (t
+        (setq embeddings (py4cl:python-method *model* "encode" documents))
+        
+        (when filename
+          (py4cl:python-exec "import pandas as pd")
+          (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents embeddings)))
+          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding")))
+          (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t)))))
+
     embeddings
 )) ; END embed-documents
 
 
-(defun retrieve (text &key (n 5) documents+embeddings documents filename)
-;```````````````````````````````````````````````````````````````````````````
+(defun load-data (documents+embeddings documents filename)
+;````````````````````````````````````````````````````````````
+; Loads data as dataframe from source. One of the following arguments must be provided:
+;   documents+embeddings: a list of (<string> <embedding vector>) pairs.
+;   documents: a list of documents (strings) to embed.
+;   filename: the name of a CSV file containing 'document' and 'embedding' columns.
+;
+  (let (data df)
+    (py4cl:python-exec "import pandas as pd")
+
+    (cond
+      (filename
+        (setq df (py4cl:python-call "pd.read_csv" filename))
+        (when (not *api*)
+          (py4cl:python-exec df "['embedding']" "="
+            (py4cl:python-eval df ".embedding.apply(eval)"))))
+      (documents+embeddings
+        (setq data (py4cl:python-call "list" (py4cl:python-call "zip"
+          (mapcar #'first documents+embeddings)
+          (mapcar #'second documents+embeddings))))
+        (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding"))))
+      (documents
+        (cond
+          (*api*
+            (setq data documents)
+            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document"))))
+          (t
+            (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents (embed-documents documents))))
+            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding"))))))
+      (t (error "Must give one of :documents+embeddings, :documents or :filename as input")))
+
+    df
+)) ; END load-data
+
+
+(defun retrieve (text &key (n 5) documents+embeddings documents filename api-key)
+;``````````````````````````````````````````````````````````````````````````````````
 ; Given some text, retrieve the N most similar documents. One of the following 
 ; keyword arguments must be provided:
 ;   documents+embeddings: a list of (<string> <embedding vector>) pairs.
@@ -83,31 +188,26 @@
 
   (py4cl:python-exec "def sim(x, np): return lambda y: np.dot(x, y)/(np.linalg.norm(x)*np.linalg.norm(y))")
 
-  (let (embedding data df sim-func ret)
+  (let (embedding df sim-func ret)
+    ; Load data
+    (setq df (load-data documents+embeddings documents filename))
+
+    ; Get similarity
     (cond
-      (filename
-        (setq df (py4cl:python-call "pd.read_csv" filename))
-        (py4cl:python-exec df "['embedding']" "="
-          (py4cl:python-eval df ".embedding.apply(eval)")))
-      (documents+embeddings
-        (setq data (py4cl:python-call "list" (py4cl:python-call "zip"
-          (mapcar #'first documents+embeddings)
-          (mapcar #'second documents+embeddings))))
-        (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding"))))
-      (documents
-        (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents (embed-documents documents))))
-        (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding"))))
-      (t (error "Must give one of :documents+embeddings, :documents or :filename as input")))
+      ; Use API model
+      (*api*
+        (py4cl:python-exec df "['similarity']" "="
+          (similarity-api api-key text (py4cl:python-call "list" (py4cl:python-eval df ".document")))))
 
-    (setq embedding (py4cl:python-method *model* "encode" text))
-    (setq sim-func (py4cl:python-call "sim" embedding (py4cl:python-eval "np")))
+      ; Use local model
+      (t
+        (setq embedding (py4cl:python-method *model* "encode" text))
+        (setq sim-func (py4cl:python-call "sim" embedding (py4cl:python-eval "np")))
 
-    (py4cl:python-exec df "['similarity']" "="
-      (py4cl:python-call (py4cl:python-eval df ".embedding.apply") sim-func))
+        (py4cl:python-exec df "['similarity']" "="
+          (py4cl:python-call (py4cl:python-eval df ".embedding.apply") sim-func))))
 
-    (py4cl:python-exec df "['similarity']" "="
-          (py4cl:python-call (py4cl:python-eval df ".embedding.apply") sim-func))
-
+    ; Sort by similarity and return top n
     (setq ret (py4cl:python-call (py4cl:python-eval df ".sort_values") "similarity" :ascending 0))
     (setq ret (py4cl:python-method ret "head" n))
 
