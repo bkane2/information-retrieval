@@ -102,15 +102,19 @@
 )) ; END similarity-api
 
 
-(defun embed-documents (documents &key filename append api-key)
-;````````````````````````````````````````````````````````````````
+(defun embed-documents (documents &key filename append api-key indices)
+;````````````````````````````````````````````````````````````````````````
 ; Embeds a list of documents (strings). If a filename is given, create a .CSV file containing the resulting
 ; embeddings for each document (or append to an existing .CSV file if :append t is given).
+; If :indices (a list of strings of equal length as documents) is given, add as additional column to result.
 ;
 ; If using the API, do not embed documents, but still create a .CSV file containing the documents (if specified).
 ;
   (when (or (not (boundp '*model*)) (null *model*))
     (init))
+
+  (when (or (null indices) (not (listp indices)) (not (every #'stringp indices)) (not (= (length indices) (length documents))))
+    (setq indices (loop for n from 0 below (length documents) collect (write-to-string n))))
 
   (let (embeddings data df)
 
@@ -119,9 +123,8 @@
       (*api*
         (when filename
           (py4cl:python-exec "import pandas as pd")
-          (setq data documents)
-          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document")))
-          (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t))))
+          (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents)))
+          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document")))))
 
       ; Use local model
       (t
@@ -129,9 +132,10 @@
         
         (when filename
           (py4cl:python-exec "import pandas as pd")
-          (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents embeddings)))
-          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding")))
-          (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t)))))
+          (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents embeddings)))
+          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))))
+
+    (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t))
 
     embeddings
 )) ; END embed-documents
@@ -144,7 +148,7 @@
 ;   documents: a list of documents (strings) to embed.
 ;   filename: the name of a CSV file containing 'document' and 'embedding' columns.
 ;
-  (let (data df)
+  (let (indices data df)
     (py4cl:python-exec "import pandas as pd")
 
     (cond
@@ -154,31 +158,36 @@
           (py4cl:python-exec df "['embedding']" "="
             (py4cl:python-eval df ".embedding.apply(eval)"))))
       (documents+embeddings
+        (setq indices (loop for n from 0 below (length documents+embeddings) collect (write-to-string n)))
         (setq data (py4cl:python-call "list" (py4cl:python-call "zip"
+          indices
           (mapcar #'first documents+embeddings)
           (mapcar #'second documents+embeddings))))
-        (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding"))))
+        (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))
       (documents
+        (setq indices (loop for n from 0 below (length documents) collect (write-to-string n)))
         (cond
           (*api*
-            (setq data documents)
-            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document"))))
+            (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents)))
+            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document"))))
           (t
-            (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents (embed-documents documents))))
-            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("document" "embedding"))))))
+            (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents (indices embed-documents documents))))
+            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))))
       (t (error "Must give one of :documents+embeddings, :documents or :filename as input")))
 
     df
 )) ; END load-data
 
 
-(defun retrieve (text &key (n 5) documents+embeddings documents filename api-key)
-;``````````````````````````````````````````````````````````````````````````````````
+(defun retrieve (text &key (n 5) documents+embeddings documents filename api-key indices)
+;`````````````````````````````````````````````````````````````````````````````````````````
 ; Given some text, retrieve the N most similar documents. One of the following 
 ; keyword arguments must be provided:
 ;   documents+embeddings: a list of (<string> <embedding vector>) pairs.
 ;   documents: a list of documents (strings) to embed.
 ;   filename: the name of a CSV file containing 'document' and 'embedding' columns.
+;
+; If :indices t is given, return the indices of the documents rather than the documents themselves.
 ;
   (when (or (not (boundp '*model*)) (null *model*))
     (init))
@@ -211,7 +220,9 @@
     (setq ret (py4cl:python-call (py4cl:python-eval df ".sort_values") "similarity" :ascending 0))
     (setq ret (py4cl:python-method ret "head" n))
 
-    (py4cl:python-call "list" (py4cl:python-eval ret ".document"))
+    (if indices
+      (py4cl:python-call "list" (py4cl:python-eval ret ".indices"))
+      (py4cl:python-call "list" (py4cl:python-eval ret ".document")))
 )) ; END retrieve
 
 

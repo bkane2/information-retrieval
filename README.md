@@ -62,6 +62,14 @@ $ (setq documents '("Sentence one." "Sentence two." "Sentence three."))
 $ (information-retrieval:embed-documents documents :filename "test.csv" :append t)
 ```
 
+If writing embeddings to a CSV, a list of separate indices (must be a list of strings of equal length as documents) can be provided to be added as an additional column to the CSV:
+
+```lisp
+$ (setq documents '("Sentence one." "Sentence two." "Sentence three."))
+$ (setq indices '("ID1" "ID2" "ID3"))
+$ (information-retrieval:embed-documents documents :filename "test.csv" :indices indices)
+```
+
 If using API, provide the API key as a keyword argument (this function will not actually embed the documents, but will still output
 a CSV file containing the documents if a filename is specified):
 
@@ -86,6 +94,13 @@ $ (information-retrieval:retrieve text :n 5 :documents+embeddings '(("Sentence o
 ```lisp
 $ (setq text '("Test sentence."))
 $ (information-retrieval:retrieve text :n 5 :documents '("Sentence one." "Sentence two."))
+```
+
+The :indices keyword argument can be provided so that the function returns the indices of the documents instead of the documents themselves (unless custom indices are specified previously when encoding the documents to a CSV file, these will be the indices of the documents within the input document list):
+
+```lisp
+$ (setq text '("Test sentence."))
+$ (information-retrieval:retrieve text :n 5 :filename "test.csv" :indices t)
 ```
 
 If using API, provide the API key as a keyword argument:
