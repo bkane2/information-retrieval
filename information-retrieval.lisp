@@ -116,6 +116,10 @@
   (when (or (null indices) (not (listp indices)) (not (every #'stringp indices)) (not (= (length indices) (length documents))))
     (setq indices (loop for n from 0 below (length documents) collect (write-to-string n))))
 
+  (when (null documents)
+    (setq documents #())
+    (setq indices #()))
+
   (let (embeddings data df)
 
     (cond
