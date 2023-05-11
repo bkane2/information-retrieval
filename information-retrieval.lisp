@@ -205,6 +205,9 @@
     ; Load data
     (setq df (load-data documents+embeddings documents filename))
 
+    (when (py4cl:python-eval df ".empty")
+      (return-from retrieve nil))
+
     ; Get similarity
     (cond
       ; Use API model
