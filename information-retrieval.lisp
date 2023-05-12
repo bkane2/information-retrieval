@@ -152,9 +152,8 @@
     (when filename
       (py4cl:python-exec "import pandas as pd")
       (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents embeddings)))
-      (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))
-
-    (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t))
+      (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding")))
+      (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t)))
 
     embeddings
 )) ; END embed-documents
