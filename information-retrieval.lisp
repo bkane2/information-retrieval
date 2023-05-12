@@ -3,7 +3,8 @@
 
 (in-package :information-retrieval)
 
-(defvar +huggingface-prefix+ "https://api-inference.huggingface.co/models/")
+(defvar +hf-embedding-prefix+ "https://api-inference.huggingface.co/pipeline/feature-extraction/")
+(defvar +hf-similarity-prefix+ "https://api-inference.huggingface.co/models/")
 
 (defparameter *api* nil)
 (defparameter *model-name* "all-distilroberta-v1")
@@ -42,8 +43,8 @@
   (cond
     ; Use API model
     (*api*
-      (defparameter *model* (concatenate 'string +huggingface-prefix+ *model-name*))
-      (similarity-api api-key "init" #("init")))
+      (defparameter *model* *model-name*)
+      (embedding-api api-key "init"))
 
     ; Use local models
     (t
@@ -82,6 +83,23 @@
 )) ; END query-api
 
 
+(defun embedding-api (api-key documents)
+;`````````````````````````````````````````
+; Gets a list of embeddings for a list of documents, using the HuggingFace API.
+;
+  (when (or (not (boundp '*model*)) (null *model*))
+    (init))
+
+  (let ((query (make-hash-table :test #'equal))
+        (options (make-hash-table :test #'equal)))
+    (setf (gethash "wait_for_model" options) t)
+    (setf (gethash "inputs" query) documents)
+    (setf (gethash "options" query) options)
+
+    (query-api (concatenate 'string +hf-embedding-prefix+ *model*) api-key query)
+)) ; END embedding-api
+
+
 (defun similarity-api (api-key text documents)
 ;````````````````````````````````````````````````
 ; Gets a list of similarities between a given text and a list of documents, using the HuggingFace API.
@@ -98,7 +116,7 @@
     (setf (gethash "inputs" query) inputs)
     (setf (gethash "options" query) options)
 
-    (query-api *model* api-key query)
+    (query-api (concatenate 'string +hf-similarity-prefix+ *model*) api-key query)
 )) ; END similarity-api
 
 
@@ -125,19 +143,16 @@
     (cond
       ; Use API model
       (*api*
-        (when filename
-          (py4cl:python-exec "import pandas as pd")
-          (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents)))
-          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document")))))
+        (setq embeddings (embedding-api api-key documents)))
 
       ; Use local model
       (t
-        (setq embeddings (py4cl:python-method *model* "encode" documents))
-        
-        (when filename
-          (py4cl:python-exec "import pandas as pd")
-          (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents embeddings)))
-          (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))))
+        (setq embeddings (py4cl:python-method *model* "encode" documents))))
+
+    (when filename
+      (py4cl:python-exec "import pandas as pd")
+      (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents embeddings)))
+      (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))
 
     (py4cl:python-call (py4cl:python-eval df ".to_csv") filename :index nil :mode (if append "a" "w") :header (if append nil t))
 
@@ -158,9 +173,8 @@
     (cond
       (filename
         (setq df (py4cl:python-call "pd.read_csv" filename))
-        (when (not *api*)
-          (py4cl:python-exec df "['embedding']" "="
-            (py4cl:python-eval df ".embedding.apply(eval)"))))
+        (py4cl:python-exec df "['embedding']" "="
+          (py4cl:python-eval df ".embedding.apply(eval)")))
       (documents+embeddings
         (setq indices (loop for n from 0 below (length documents+embeddings) collect (write-to-string n)))
         (setq data (py4cl:python-call "list" (py4cl:python-call "zip"
@@ -170,13 +184,8 @@
         (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))
       (documents
         (setq indices (loop for n from 0 below (length documents) collect (write-to-string n)))
-        (cond
-          (*api*
-            (setq data (py4cl:python-call "list" (py4cl:python-call "zip" indices documents)))
-            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document"))))
-          (t
-            (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents (indices embed-documents documents))))
-            (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))))
+        (setq data (py4cl:python-call "list" (py4cl:python-call "zip" documents (indices embed-documents documents))))
+        (setq df (py4cl:python-call "pd.DataFrame" data :columns #("indices" "document" "embedding"))))
       (t (error "Must give one of :documents+embeddings, :documents or :filename as input")))
 
     df
@@ -208,20 +217,20 @@
     (when (py4cl:python-eval df ".empty")
       (return-from retrieve nil))
 
-    ; Get similarity
+    ; Get text embedding 
     (cond
       ; Use API model
       (*api*
-        (py4cl:python-exec df "['similarity']" "="
-          (similarity-api api-key text (py4cl:python-call "list" (py4cl:python-eval df ".document")))))
+        (setq embedding (embedding-api api-key text)))
 
       ; Use local model
       (t
-        (setq embedding (py4cl:python-method *model* "encode" text))
-        (setq sim-func (py4cl:python-call "sim" embedding (py4cl:python-eval "np")))
+        (setq embedding (py4cl:python-method *model* "encode" text))))
 
-        (py4cl:python-exec df "['similarity']" "="
-          (py4cl:python-call (py4cl:python-eval df ".embedding.apply") sim-func))))
+    ; Get similarity
+    (setq sim-func (py4cl:python-call "sim" embedding (py4cl:python-eval "np")))
+    (py4cl:python-exec df "['similarity']" "="
+      (py4cl:python-call (py4cl:python-eval df ".embedding.apply") sim-func))
 
     ; Sort by similarity and return top n
     (setq ret (py4cl:python-call (py4cl:python-eval df ".sort_values") "similarity" :ascending 0))
