@@ -172,6 +172,8 @@
     (cond
       (filename
         (setq df (py4cl:python-call "pd.read_csv" filename))
+        (when (not (py4cl:python-eval "bool(" df ".embedding.str.contains('\\[').all())"))
+          (return-from load-data nil))
         (py4cl:python-exec df "['embedding']" "="
           (py4cl:python-eval df ".embedding.apply(eval)")))
       (documents+embeddings
@@ -212,6 +214,9 @@
   (let (embedding df sim-func ret)
     ; Load data
     (setq df (load-data documents+embeddings documents filename))
+
+    (when (null df)
+      (return-from retrieve nil))
 
     (when (py4cl:python-eval df ".empty")
       (return-from retrieve nil))
